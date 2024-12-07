@@ -1,4 +1,4 @@
-from fastapi import FastAPI, Request, Form
+from fastapi import FastAPI, Request, Form, UploadFile, File
 from fastapi.responses import HTMLResponse
 from sse_starlette.sse import EventSourceResponse
 import json
@@ -79,12 +79,21 @@ async def process_audio(audio_file: str):
         print(f"Processed chunk starting at {chunk_start_time:.2f} seconds")
 
 @app.get("/stream-transcription")
-async def stream_transcription(request: Request, url: str):
+async def stream_transcription(request: Request, url: str = None, file: str = None):
     async def event_generator():
         try:
-            print(f"Starting download for URL: {url}")
-            audio_file = download_youtube_audio(url)
-            print(f"Download complete: {audio_file}")
+            audio_file = None
+            if url:
+                print(f"Starting download for URL: {url}")
+                audio_file = download_youtube_audio(url)
+            elif file:
+                print(f"Processing uploaded file: {file}")
+                audio_file = file
+            
+            if not audio_file:
+                raise ValueError("No URL or file provided")
+                
+            print(f"Processing file: {audio_file}")
             
             async for segment in process_audio(audio_file):
                 if await request.is_disconnected():
@@ -94,9 +103,9 @@ async def stream_transcription(request: Request, url: str):
                 yield {"event": "message", "data": json.dumps(segment)}
             
             print("Cleaning up audio file...")
-            os.remove(audio_file)
+            if url:  # Only remove downloaded files, not uploaded ones
+                os.remove(audio_file)
             
-            # Send completion message
             yield {"event": "message", "data": json.dumps({'type': 'complete'})}
             
         except Exception as e:
@@ -121,32 +130,60 @@ async def home():
 
                     <div class="bg-white rounded-lg shadow p-6">
                         <div class="flex gap-4 justify-center mb-8">
-                            <button class="flex items-center gap-2 px-4 py-2 rounded-md hover:bg-gray-100">
+                            <button id="url-tab" class="flex items-center gap-2 px-4 py-2 rounded-md hover:bg-gray-100 bg-gray-100">
                                 <svg class="w-5 h-5" fill="currentColor" viewBox="0 0 20 20">
                                     <path d="M12.232 4.232a2.5 2.5 0 013.536 3.536l-1.225 1.224a.75.75 0 001.061 1.06l1.224-1.224a4 4 0 00-5.656-5.656l-3 3a4 4 0 00.225 5.865.75.75 0 00.977-1.138 2.5 2.5 0 01-.142-3.667l3-3z" />
                                     <path d="M11.603 7.963a.75.75 0 00-.977 1.138 2.5 2.5 0 01.142 3.667l-3 3a2.5 2.5 0 01-3.536-3.536l1.225-1.224a.75.75 0 00-1.061-1.06l-1.224 1.224a4 4 0 105.656 5.656l3-3a4 4 0 00-.225-5.865z" />
                                 </svg>
                                 From URL
                             </button>
+                            <button id="file-tab" class="flex items-center gap-2 px-4 py-2 rounded-md hover:bg-gray-100">
+                                <svg class="w-5 h-5" fill="currentColor" viewBox="0 0 20 20">
+                                    <path fill-rule="evenodd" d="M4 4a2 2 0 012-2h4.586A2 2 0 0112 2.586L15.414 6A2 2 0 0116 7.414V16a2 2 0 01-2 2H6a2 2 0 01-2-2V4z" clip-rule="evenodd" />
+                                </svg>
+                                From File
+                            </button>
                         </div>
 
-                        <form id="transcribe-form" class="space-y-4">
-                            <input 
-                                type="text" 
-                                name="url" 
-                                placeholder="Enter YouTube URL" 
-                                required
-                                class="w-full p-2 border rounded-md"
-                            >
-                            <button 
-                                type="submit" 
-                                id="submit-btn"
-                                class="w-full bg-blue-600 text-white py-2 rounded-md hover:bg-blue-700 disabled:bg-blue-300 flex items-center justify-center gap-2"
-                            >
-                                <div class="spinner hidden w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
-                                <span>Transcribe</span>
-                            </button>
-                        </form>
+                        <div id="url-form" class="space-y-4">
+                            <form id="transcribe-form" class="space-y-4">
+                                <input 
+                                    type="text" 
+                                    name="url" 
+                                    placeholder="Enter YouTube URL" 
+                                    required
+                                    class="w-full p-2 border rounded-md"
+                                >
+                                <button 
+                                    type="submit" 
+                                    id="submit-btn"
+                                    class="w-full bg-blue-600 text-white py-2 rounded-md hover:bg-blue-700 disabled:bg-blue-300 flex items-center justify-center gap-2"
+                                >
+                                    <div class="spinner hidden w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
+                                    <span>Transcribe</span>
+                                </button>
+                            </form>
+                        </div>
+
+                        <div id="file-form" class="space-y-4 hidden">
+                            <form id="file-upload-form" class="space-y-4">
+                                <input 
+                                    type="file" 
+                                    name="file" 
+                                    accept="audio/*,video/*"
+                                    required
+                                    class="w-full p-2 border rounded-md"
+                                >
+                                <button 
+                                    type="submit" 
+                                    id="file-submit-btn"
+                                    class="w-full bg-blue-600 text-white py-2 rounded-md hover:bg-blue-700 disabled:bg-blue-300 flex items-center justify-center gap-2"
+                                >
+                                    <div class="spinner hidden w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
+                                    <span>Transcribe</span>
+                                </button>
+                            </form>
+                        </div>
 
                         <div id="transcription" class="mt-8 space-y-2"></div>
                         
@@ -297,10 +334,120 @@ async def home():
                     document.body.removeChild(a);
                     window.URL.revokeObjectURL(url);
                 }
+
+                document.getElementById('url-tab').addEventListener('click', () => {
+                    document.getElementById('url-form').classList.remove('hidden');
+                    document.getElementById('file-form').classList.add('hidden');
+                    document.getElementById('url-tab').classList.add('bg-gray-100');
+                    document.getElementById('file-tab').classList.remove('bg-gray-100');
+                });
+
+                document.getElementById('file-tab').addEventListener('click', () => {
+                    document.getElementById('file-form').classList.remove('hidden');
+                    document.getElementById('url-form').classList.add('hidden');
+                    document.getElementById('file-tab').classList.add('bg-gray-100');
+                    document.getElementById('url-tab').classList.remove('bg-gray-100');
+                });
+
+                document.getElementById('file-upload-form').addEventListener('submit', async function(e) {
+                    e.preventDefault();
+                    
+                    const form = e.target;
+                    const btn = document.getElementById('file-submit-btn');
+                    const spinner = btn.querySelector('.spinner');
+                    const btnText = btn.querySelector('span');
+                    const transcriptionDiv = document.getElementById('transcription');
+                    const downloadButtons = document.getElementById('download-buttons');
+                    
+                    // Clear previous transcription and hide download buttons
+                    transcriptionDiv.innerHTML = '';
+                    downloadButtons.classList.add('hidden');
+                    transcriptSegments = [];
+                    
+                    btn.disabled = true;
+                    spinner.classList.remove('hidden');
+                    btnText.textContent = 'Transcribing...';
+                    
+                    const formData = new FormData(form);
+                    
+                    try {
+                        // First upload the file
+                        const uploadResponse = await fetch('/upload-file', {
+                            method: 'POST',
+                            body: formData
+                        });
+                        
+                        if (!uploadResponse.ok) {
+                            throw new Error('File upload failed');
+                        }
+                        
+                        const uploadResult = await uploadResponse.json();
+                        
+                        // Then start the transcription stream
+                        const eventSource = new EventSource(`/stream-transcription?file=${encodeURIComponent(uploadResult.filename)}`);
+                        
+                        eventSource.onmessage = function(event) {
+                            try {
+                                const data = JSON.parse(event.data);
+                                
+                                if (data.type === 'segment' && data.data) {
+                                    transcriptSegments.push(data.data);
+                                    
+                                    const segmentDiv = document.createElement('div');
+                                    segmentDiv.className = 'p-4 bg-gray-50 rounded-lg mb-2';
+                                    segmentDiv.innerHTML = `
+                                        <span class="text-gray-500 mr-2">[${formatTimestamp(data.data.start)}]</span>
+                                        <span>${data.data.text}</span>
+                                    `;
+                                    transcriptionDiv.appendChild(segmentDiv);
+                                    
+                                    window.scrollTo({
+                                        top: document.body.scrollHeight,
+                                        behavior: 'smooth'
+                                    });
+                                } else if (data.type === 'complete') {
+                                    eventSource.close();
+                                    btn.disabled = false;
+                                    spinner.classList.add('hidden');
+                                    btnText.textContent = 'Transcribe';
+                                    
+                                    if (transcriptSegments.length > 0) {
+                                        downloadButtons.classList.remove('hidden');
+                                    }
+                                }
+                            } catch (error) {
+                                console.error('Error processing message:', error);
+                            }
+                        };
+                        
+                        eventSource.onerror = function(error) {
+                            console.error('EventSource error:', error);
+                            eventSource.close();
+                            btn.disabled = false;
+                            spinner.classList.add('hidden');
+                            btnText.textContent = 'Transcribe';
+                        };
+                    } catch (error) {
+                        console.error('Upload error:', error);
+                        btn.disabled = false;
+                        spinner.classList.add('hidden');
+                        btnText.textContent = 'Transcribe';
+                    }
+                });
             </script>
         </body>
     </html>
     '''
+
+@app.post("/upload-file")
+async def upload_file(file: UploadFile = File(...)):
+    # Save uploaded file
+    file_path = f"uploads/{file.filename}"
+    with open(file_path, "wb") as buffer:
+        content = await file.read()
+        buffer.write(content)
+    
+    return {"filename": file_path}
 
 if __name__ == "__main__":
     os.makedirs("uploads", exist_ok=True)
