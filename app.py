@@ -189,40 +189,26 @@ async def home():
                 eventSource.onmessage = function(event) {
                     try {
                         console.log('Raw event data:', event.data);
-                        // Remove the "data: " prefix before parsing
                         const jsonStr = event.data.replace(/^data: /, '');
                         console.log('Cleaned JSON string:', jsonStr);
                         const data = JSON.parse(jsonStr);
                         console.log('Parsed data:', data);
                         
-                        const transcriptionDiv = document.getElementById('transcription');
-                        
                         if (data.type === 'segment' && data.data) {
-                            // Create and append new segment
                             const segmentDiv = document.createElement('div');
                             segmentDiv.className = 'p-4 bg-gray-50 rounded-lg mb-2';
                             segmentDiv.innerHTML = `
-                                <span class="text-gray-500 mr-2">[${data.data.start.toFixed(1)}s]</span>
+                                <span class="text-gray-500 mr-2">[${formatTimestamp(data.data.start)}]</span>
                                 <span>${data.data.text}</span>
                             `;
                             transcriptionDiv.appendChild(segmentDiv);
                             
-                            // Scroll to the new segment
                             window.scrollTo({
                                 top: document.body.scrollHeight,
                                 behavior: 'smooth'
                             });
                         } else if (data.type === 'complete') {
-                            // Handle completion
-                            const completeDiv = document.createElement('div');
-                            completeDiv.className = 'p-4 bg-green-50 text-green-700 rounded-lg mb-2';
-                            completeDiv.textContent = 'Transcription complete';
-                            transcriptionDiv.appendChild(completeDiv);
-                            
                             eventSource.close();
-                            const btn = document.getElementById('submit-btn');
-                            const spinner = btn.querySelector('.spinner');
-                            const btnText = btn.querySelector('span');
                             btn.disabled = false;
                             spinner.classList.add('hidden');
                             btnText.textContent = 'Transcribe';
@@ -241,6 +227,15 @@ async def home():
                     btnText.textContent = 'Transcribe';
                 };
             });
+
+            function formatTimestamp(seconds) {
+                const hours = Math.floor(seconds / 3600);
+                const minutes = Math.floor((seconds % 3600) / 60);
+                const remainingSeconds = Math.floor(seconds % 60);
+                
+                // Always return in HH:MM:SS format
+                return `${hours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')}:${remainingSeconds.toString().padStart(2, '0')}`;
+            }
             </script>
         </body>
     </html>
