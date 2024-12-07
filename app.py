@@ -91,29 +91,23 @@ async def stream_transcription(request: Request, url: str):
                     print("Client disconnected")
                     break
                 
-                # Send pure JSON without any SSE formatting
-                data = json.dumps(segment)
-                print(f"Sending data: {data}")
-                yield f"data: {data}\n\n"
+                yield {"event": "message", "data": json.dumps(segment)}
             
             print("Cleaning up audio file...")
             os.remove(audio_file)
             
             # Send completion message
-            yield f"data: {json.dumps({'type': 'complete'})}\n\n"
+            yield {"event": "message", "data": json.dumps({'type': 'complete'})}
             
         except Exception as e:
             print(f"Error occurred: {str(e)}")
-            yield f"data: {json.dumps({'type': 'error', 'message': str(e)})}\n\n"
+            yield {"event": "message", "data": json.dumps({'type': 'error', 'message': str(e)})}
 
-    return EventSourceResponse(
-        event_generator(),
-        media_type="text/event-stream"
-    )
+    return EventSourceResponse(event_generator())
 
 @app.get("/", response_class=HTMLResponse)
 async def home():
-    return """
+    return '''
     <html>
         <head>
             <title>Blayze AI</title>
@@ -133,13 +127,6 @@ async def home():
                                     <path d="M11.603 7.963a.75.75 0 00-.977 1.138 2.5 2.5 0 01.142 3.667l-3 3a2.5 2.5 0 01-3.536-3.536l1.225-1.224a.75.75 0 00-1.061-1.06l-1.224 1.224a4 4 0 105.656 5.656l3-3a4 4 0 00-.225-5.865z" />
                                 </svg>
                                 From URL
-                            </button>
-                            <button class="flex items-center gap-2 px-4 py-2 rounded-md hover:bg-gray-100">
-                                <svg class="w-5 h-5" fill="currentColor" viewBox="0 0 20 20">
-                                    <path d="M9.25 13.25a.75.75 0 001.5 0V4.636l2.955 3.129a.75.75 0 001.09-1.03l-4.25-4.5a.75.75 0 00-1.09 0l-4.25 4.5a.75.75 0 101.09 1.03L9.25 4.636v8.614z" />
-                                    <path d="M3.5 12.75a.75.75 0 00-1.5 0v2.5A2.75 2.75 0 004.75 18h10.5A2.75 2.75 0 0018 15.25v-2.5a.75.75 0 00-1.5 0v2.5c0 .69-.56 1.25-1.25 1.25H4.75c-.69 0-1.25-.56-1.25-1.25v-2.5z" />
-                                </svg>
-                                From File
                             </button>
                         </div>
 
@@ -162,86 +149,160 @@ async def home():
                         </form>
 
                         <div id="transcription" class="mt-8 space-y-2"></div>
+                        
+                        <div id="download-buttons" class="mt-4 flex gap-4 justify-center hidden">
+                            <button 
+                                id="download-txt"
+                                class="flex items-center gap-2 px-4 py-2 bg-green-600 text-white rounded-md hover:bg-green-700"
+                            >
+                                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/>
+                                </svg>
+                                Download as TXT
+                            </button>
+                            <button 
+                                id="download-json"
+                                class="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700"
+                            >
+                                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/>
+                                </svg>
+                                Download as JSON
+                            </button>
+                        </div>
                     </div>
                 </div>
             </div>
 
             <script>
-            document.getElementById('transcribe-form').addEventListener('submit', function(e) {
-                e.preventDefault();
+                let transcriptSegments = [];
                 
-                const form = e.target;
-                const btn = document.getElementById('submit-btn');
-                const spinner = btn.querySelector('.spinner');
-                const btnText = btn.querySelector('span');
-                const transcriptionDiv = document.getElementById('transcription');
+                document.getElementById("download-txt").addEventListener("click", () => downloadTranscript("txt"));
+                document.getElementById("download-json").addEventListener("click", () => downloadTranscript("json"));
                 
-                // Clear previous transcription
-                transcriptionDiv.innerHTML = '';
-                
-                btn.disabled = true;
-                spinner.classList.remove('hidden');
-                btnText.textContent = 'Transcribing...';
-                
-                const url = new FormData(form).get('url');
-                const eventSource = new EventSource(`/stream-transcription?url=${encodeURIComponent(url)}`);
-                
-                eventSource.onmessage = function(event) {
-                    try {
-                        console.log('Raw event data:', event.data);
-                        const jsonStr = event.data.replace(/^data: /, '');
-                        console.log('Cleaned JSON string:', jsonStr);
-                        const data = JSON.parse(jsonStr);
-                        console.log('Parsed data:', data);
-                        
-                        if (data.type === 'segment' && data.data) {
-                            const segmentDiv = document.createElement('div');
-                            segmentDiv.className = 'p-4 bg-gray-50 rounded-lg mb-2';
-                            segmentDiv.innerHTML = `
-                                <span class="text-gray-500 mr-2">[${formatTimestamp(data.data.start)}]</span>
-                                <span>${data.data.text}</span>
-                            `;
-                            transcriptionDiv.appendChild(segmentDiv);
+                document.getElementById("transcribe-form").addEventListener("submit", function(e) {
+                    e.preventDefault();
+                    
+                    const form = e.target;
+                    const btn = document.getElementById("submit-btn");
+                    const spinner = btn.querySelector(".spinner");
+                    const btnText = btn.querySelector("span");
+                    const transcriptionDiv = document.getElementById("transcription");
+                    const downloadButtons = document.getElementById("download-buttons");
+                    
+                    transcriptionDiv.innerHTML = "";
+                    downloadButtons.classList.add("hidden");
+                    transcriptSegments = [];
+                    
+                    btn.disabled = true;
+                    spinner.classList.remove("hidden");
+                    btnText.textContent = "Transcribing...";
+                    
+                    const url = new FormData(form).get("url");
+                    const eventSource = new EventSource(`/stream-transcription?url=${encodeURIComponent(url)}`);
+                    
+                    eventSource.onmessage = function(event) {
+                        try {
+                            const data = JSON.parse(event.data);
                             
-                            window.scrollTo({
-                                top: document.body.scrollHeight,
-                                behavior: 'smooth'
-                            });
-                        } else if (data.type === 'complete') {
-                            eventSource.close();
-                            btn.disabled = false;
-                            spinner.classList.add('hidden');
-                            btnText.textContent = 'Transcribe';
+                            if (data.type === "segment" && data.data) {
+                                transcriptSegments.push(data.data);
+                                
+                                const segmentDiv = document.createElement("div");
+                                segmentDiv.className = "p-4 bg-gray-50 rounded-lg mb-2";
+                                segmentDiv.innerHTML = `
+                                    <span class="text-gray-500 mr-2">[${formatTimestamp(data.data.start)}]</span>
+                                    <span>${data.data.text}</span>
+                                `;
+                                transcriptionDiv.appendChild(segmentDiv);
+                                
+                                window.scrollTo({
+                                    top: document.body.scrollHeight,
+                                    behavior: "smooth"
+                                });
+                            } else if (data.type === "complete") {
+                                console.log("Transcription complete, showing download buttons");
+                                eventSource.close();
+                                btn.disabled = false;
+                                spinner.classList.add("hidden");
+                                btnText.textContent = "Transcribe";
+                                
+                                if (transcriptSegments.length > 0) {
+                                    downloadButtons.classList.remove("hidden");
+                                }
+                            }
+                        } catch (error) {
+                            console.error("Error processing message:", error);
+                            console.error("Raw event data that caused error:", event.data);
                         }
-                    } catch (error) {
-                        console.error('Error processing message:', error);
-                        console.error('Raw event data that caused error:', event.data);
-                    }
-                };
-                
-                eventSource.onerror = function(error) {
-                    console.error('EventSource error:', error);
-                    eventSource.close();
-                    btn.disabled = false;
-                    spinner.classList.add('hidden');
-                    btnText.textContent = 'Transcribe';
-                };
-            });
+                    };
+                    
+                    eventSource.onerror = function(error) {
+                        console.error("EventSource error:", error);
+                        eventSource.close();
+                        btn.disabled = false;
+                        spinner.classList.add("hidden");
+                        btnText.textContent = "Transcribe";
+                    };
+                });
 
-            function formatTimestamp(seconds) {
-                const hours = Math.floor(seconds / 3600);
-                const minutes = Math.floor((seconds % 3600) / 60);
-                const remainingSeconds = Math.floor(seconds % 60);
+                function formatTimestamp(seconds) {
+                    const hours = Math.floor(seconds / 3600);
+                    const minutes = Math.floor((seconds % 3600) / 60);
+                    const remainingSeconds = Math.floor(seconds % 60);
+                    return `${hours.toString().padStart(2, "0")}:${minutes.toString().padStart(2, "0")}:${remainingSeconds.toString().padStart(2, "0")}`;
+                }
                 
-                // Always return in HH:MM:SS format
-                return `${hours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')}:${remainingSeconds.toString().padStart(2, '0')}`;
-            }
+                function downloadTranscript(format) {
+                    console.log("Downloading transcript in format:", format);
+                    console.log("Number of segments:", transcriptSegments.length);
+                    
+                    if (transcriptSegments.length === 0) {
+                        console.error("No transcript segments to download");
+                        return;
+                    }
+                    
+                    let content;
+                    let filename;
+                    let mimeType;
+                    
+                    if (format === "txt") {
+                        content = transcriptSegments
+                            .map(segment => `[${formatTimestamp(segment.start)}] ${segment.text}`)
+                            .join("\\n");
+                        filename = "transcript.txt";
+                        mimeType = "text/plain";
+                    } else {
+                        content = JSON.stringify({
+                            segments: transcriptSegments,
+                            metadata: {
+                                totalSegments: transcriptSegments.length,
+                                generatedAt: new Date().toISOString()
+                            }
+                        }, null, 2);
+                        filename = "transcript.json";
+                        mimeType = "application/json";
+                    }
+                    
+                    console.log("Creating download with content length:", content.length);
+                    
+                    const blob = new Blob([content], { type: mimeType });
+                    const url = window.URL.createObjectURL(blob);
+                    const a = document.createElement("a");
+                    a.style.display = "none";
+                    a.href = url;
+                    a.download = filename;
+                    document.body.appendChild(a);
+                    a.click();
+                    document.body.removeChild(a);
+                    window.URL.revokeObjectURL(url);
+                }
             </script>
         </body>
     </html>
-    """
+    '''
 
 if __name__ == "__main__":
     os.makedirs("uploads", exist_ok=True)
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8000) 
+    uvicorn.run(app, host="0.0.0.0", port=8000)
