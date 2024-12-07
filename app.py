@@ -8,11 +8,15 @@ import yt_dlp
 import os
 import warnings
 import torch
+import numpy as np
 
 warnings.filterwarnings("ignore")
 torch.set_num_threads(4)
 
 app = FastAPI()
+
+# Whisper uses 16kHz audio
+SAMPLE_RATE = 16000
 
 def download_youtube_audio(url: str) -> str:
     """Download audio from YouTube video"""
@@ -33,23 +37,46 @@ def download_youtube_audio(url: str) -> str:
         return audio_file
 
 async def process_audio(audio_file: str):
-    """Process audio file and yield segments"""
+    """Process audio file and yield segments in real-time"""
     print("Starting transcription process...")
     model = whisper.load_model("base")
     print("Model loaded, starting transcription...")
-    result = model.transcribe(audio_file)
-    print(f"Transcription complete, found {len(result['segments'])} segments")
     
-    for i, segment in enumerate(result["segments"]):
-        print(f"Yielding segment {i+1}/{len(result['segments'])}")
-        yield {
-            "type": "segment",
-            "data": {
-                "start": segment["start"],
-                "text": segment["text"].strip()
+    # Load audio
+    audio = whisper.load_audio(audio_file)
+    
+    # Get duration and calculate chunk size (e.g., 30 seconds)
+    duration = len(audio) / SAMPLE_RATE
+    chunk_duration = 30.0  # seconds
+    chunk_size = int(SAMPLE_RATE * chunk_duration)
+    
+    print(f"Audio duration: {duration:.2f} seconds")
+    print(f"Processing in {chunk_duration}-second chunks")
+    
+    # Process audio in chunks
+    for i in range(0, len(audio), chunk_size):
+        chunk = audio[i:i + chunk_size]
+        
+        # Pad last chunk if needed
+        if len(chunk) < chunk_size:
+            chunk = np.pad(chunk, (0, chunk_size - len(chunk)))
+        
+        # Transcribe chunk
+        result = model.transcribe(chunk)
+        
+        # Adjust timestamp to account for chunk position
+        chunk_start_time = i / SAMPLE_RATE
+        for segment in result["segments"]:
+            segment["start"] += chunk_start_time
+            yield {
+                "type": "segment",
+                "data": {
+                    "start": segment["start"],
+                    "text": segment["text"].strip()
+                }
             }
-        }
-        await asyncio.sleep(0.1)
+            
+        print(f"Processed chunk starting at {chunk_start_time:.2f} seconds")
 
 @app.get("/stream-transcription")
 async def stream_transcription(request: Request, url: str):
