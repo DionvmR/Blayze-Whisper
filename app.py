@@ -233,10 +233,7 @@ async def home():
                 const minutes = Math.floor((seconds % 3600) / 60);
                 const remainingSeconds = Math.floor(seconds % 60);
                 
-<<<<<<< HEAD
-=======
                 // Always return in HH:MM:SS format
->>>>>>> 358ea73bda87e1fcecb442139bdf30952775e562
                 return `${hours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')}:${remainingSeconds.toString().padStart(2, '0')}`;
             }
             </script>
